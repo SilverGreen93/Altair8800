@@ -1,11 +1,11 @@
 ifeq ($(OSTYPE),msys)
   CFLAGS=-O3
-  LFLAGS=-O3 -lws2_32
+  LFLAGS=-O3
   OBJ=obj-msys
   EXT=.exe
 else
   CFLAGS=-O3
-  LFLAGS=-O3 -lncurses -lpthread
+  LFLAGS=-O3 -lncurses
   OBJ=obj-linux
   EXT=
 endif
@@ -40,6 +40,7 @@ deps:
 # --------------------------------------------------------------------------------------------------
 # The following list of dependencies can be created by typing "make deps"
 # --------------------------------------------------------------------------------------------------
+
 
 $(OBJ)/Altair8800.o: Altair8800.ino Altair8800.h Arduino/Arduino.h config.h \
  cpucore.h host.h host_pc.h mem.h prog_basic.h breakpoint.h serial.h \

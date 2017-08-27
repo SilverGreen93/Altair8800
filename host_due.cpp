@@ -926,7 +926,7 @@ void host_setup()
 }
 
 
-int32_t host_get_file_size(const char *filename)
+int host_get_file_size(const char *filename)
 {
   int res = -1;
 

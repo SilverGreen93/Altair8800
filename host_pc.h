@@ -88,7 +88,7 @@ extern byte stop_request;
 
 void host_check_interrupts();
 
-void host_serial_write(byte iface, byte data);
-bool host_serial_available_for_write(byte iface);
+#define host_serial_available_for_write(x) Serial.availableForWrite()
+#define host_serial_write(x, data)         Serial.write(data)
 
 #endif
