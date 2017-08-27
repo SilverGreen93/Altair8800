@@ -454,9 +454,9 @@ void filesys_print_dir()
   // 03 BASIC program   a            800
   // 04 <80>            <81>         
 
-  Serial.print(F("\033[2J\r\n"));
-  Serial.print(F("ID Type            Name        Size\r\n"));
-  Serial.print(F("-----------------------------------\r\n"));
+  Serial.print(F("\033[2J\n"));
+  Serial.print(F("ID Type            Name        Size\n"));
+  Serial.print(F("-----------------------------------\n"));
   byte numEntries = dir_get_num_entries();
   struct DirEntryStruct entry;
   uint16_t totalUsed = 4+numEntries*sizeof(struct DirEntryStruct);
@@ -569,9 +569,9 @@ void filesys_manage()
 
         case 'd':
           {
-            Serial.print(F("\r\nDelete file with id: "));
+            Serial.print(F("\nDelete file with id: "));
             byte i = (byte) numsys_read_word();
-            Serial.print(F("\r\nReally delete file with id "));
+            Serial.print(F("\nReally delete file with id "));
             numsys_print_byte(i);
             Serial.print(F(" (y/n)? "));
             while( !serial_available() );
@@ -582,7 +582,7 @@ void filesys_manage()
 
         case 'r':
           {
-            Serial.print(F("\r\nRead file with id: "));
+            Serial.print(F("\nRead file with id: "));
             byte i = (byte) numsys_read_word();
             Serial.println();
             
@@ -630,7 +630,7 @@ void filesys_manage()
               
         case 'F': 
           {
-            Serial.print(F("\r\nReally re-format and lose all data (y/n)? "));
+            Serial.print(F("\nReally re-format and lose all data (y/n)? "));
             while( !serial_available() );
             if( serial_read()=='y' )
               dir_set_num_entries(0);
