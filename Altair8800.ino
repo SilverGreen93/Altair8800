@@ -334,7 +334,7 @@ void altair_wait_step()
 {
   cswitch &= BIT(SW_RESET); // clear everything but RESET status
   while( host_read_status_led_WAIT() && (cswitch & (BIT(SW_STEP) | BIT(SW_SLOW) | BIT(SW_RESET)))==0 )
-    { read_inputs(); delay(10); }
+    read_inputs();
 
   if( cswitch & BIT(SW_SLOW) ) delay(500);
 }
@@ -1109,13 +1109,15 @@ void altair_out(byte addr, byte data)
   host_set_status_led_OUT();
   host_set_status_led_WO();
   host_set_addr_leds(addr|addr*256);
-  host_set_data_leds(0xff);
+  /*host_set_data_leds(0xff);*/
 
   switch( addr )
     {
     case 0000: serial_sio_out_ctrl(data); break;
     case 0001: serial_sio_out_data(data); break;
 
+    case 0003: serial_sio_out_data(data); break;
+    
     case 0006: serial_acr_out_ctrl(data); break;
     case 0007: serial_acr_out_data(data); break;
 
@@ -1130,13 +1132,22 @@ void altair_out(byte addr, byte data)
     case 0023: serial_2sio2_out_data(data); break;
 
     case 0376: altair_vi_out_control(data); break;
+    default:
+      Serial.print("Unknown out address: Q");
+      Serial.print(addr, OCT);
+      Serial.print(", data: 0x");
+      Serial.println(data, HEX);
+      break;
     }
   
   if( host_read_status_led_WAIT() )
     {
-      altair_set_outputs(addr | addr*256, 0xff);
+      /*altair_set_outputs(addr | addr*256, 0xff);*/
+       host_set_data_leds(data);
       altair_wait_step();
     }
+    
+    host_set_data_leds(data);
 
   host_clr_status_led_OUT();
 }
@@ -1155,6 +1166,9 @@ byte altair_in(byte addr)
   switch( addr )
     {
     case 0000: data = serial_sio_in_ctrl(); break;
+
+   //case 0002: data = 0x01;
+    
     case 0006: data = serial_acr_in_ctrl(); break;
     case 0020: data = serial_2sio1_in_ctrl(); break;
     case 0022: data = serial_2sio2_in_ctrl(); break;
@@ -1166,15 +1180,19 @@ byte altair_in(byte addr)
     case 0007: data = serial_acr_in_data(); break;
     case 0021: data = serial_2sio1_in_data(); break;
     case 0023: data = serial_2sio2_in_data(); break;
-    default:   data = 0xff; break;
+    default:   data = ~altair_read_sense_switches(); /*0xff;*/ 
+      Serial.print("Unknown inp address: Q");
+      Serial.println(addr, OCT);
+     break;
     }
 
   if( host_read_status_led_WAIT() )
     {
-      altair_set_outputs(addr| addr*256, data);
+      /*altair_set_outputs(addr | addr*256, data);*/
+      host_set_data_leds(data);
       altair_wait_step();
     }
-  else
+    
     host_set_data_leds(data);
 
   host_clr_status_led_INP();
