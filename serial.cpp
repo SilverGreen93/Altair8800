@@ -687,7 +687,6 @@ void serial_2sio2_out_data(byte data) { serial_2sio_out_data(CSM_2SIO2, data); }
 
 // ------------------------------------------------------------------------------------------------------------
 
-
 byte serial_sio_in_ctrl()
 {
   byte data = serial_status_dev[CSM_SIO];
@@ -729,7 +728,6 @@ byte serial_sio_in_data()
 
   return data;
 }
-
 
 void serial_sio_out_ctrl(byte data)
 {
@@ -782,6 +780,37 @@ void serial_sio_out_data(byte data)
     }
 }
 
+
+// ------------------------------------------------------------------------------------------------------------
+
+void serial_centronics_out_data(byte data)
+{
+
+	// if set to translate LF to CR+LF
+	if ((config_serial_backspace(CSM_CEN) == CSFB_NONE) && (data == 0x0D))
+		serial_write(CSM_CEN, 0x0A);
+
+	// output character
+	serial_write(CSM_CEN, data);
+
+	if (serial_ctrl[CSM_CEN] & (SSC_INTTX | SSC_REALTIME))
+	{
+		// transmit interrupts are enabled
+		// update status register (send buffer is NOT empty now)
+		// this also schedules a timer to set the TDRE flag again
+		set_serial_status(CSM_CEN, serial_status[CSM_CEN] & ~SST_TDRE);
+	}
+}
+
+byte serial_centronics_in_control()
+{
+	return 0x01; // returns printer not busy and ready
+}
+
+void serial_centronics_out_ctrl(byte data)
+{
+	; // not implemented
+}
 
 // ------------------------------------------------------------------------------------------------------------
 

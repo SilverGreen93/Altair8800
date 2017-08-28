@@ -1,7 +1,7 @@
 
----------------------------------------------
-Available disks:
----------------------------------------------
++--------------------------------------------------+
+| Available floppy disks:                          |
++--------------------------------------------------+
 0001) DISK01.DSK: CP/M (63k)
 0010) DISK02.DSK: ALTAIR DOS 1.0
 0011) DISK03.DSK: ALTAIR Disk Basic
@@ -17,5 +17,6 @@ Available disks:
 1101) DISK0D.DSK: Altair Mini-Disk Basic programs
 1110) DISK0E.DSK: Altair Mini-Disk DOS
 1111) DISK0F.DSK: Altair Mini-Disk DOS programs
----------------------------------------------
-
++--------------------------------------------------+
+| Disk load format: 0 001 ddd dnn nnn nnn          |
++--------------------------------------------------+

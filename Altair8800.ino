@@ -1116,7 +1116,8 @@ void altair_out(byte addr, byte data)
     case 0000: serial_sio_out_ctrl(data); break;
     case 0001: serial_sio_out_data(data); break;
 
-    case 0003: serial_sio_out_data(data); break;
+	case 0002: serial_centronics_out_ctrl(data); break;
+    case 0003: serial_centronics_out_data(data); break;
     
     case 0006: serial_acr_out_ctrl(data); break;
     case 0007: serial_acr_out_data(data); break;
@@ -1167,7 +1168,7 @@ byte altair_in(byte addr)
     {
     case 0000: data = serial_sio_in_ctrl(); break;
 
-   //case 0002: data = 0x01;
+    case 0002: data = serial_centronics_in_control();
     
     case 0006: data = serial_acr_in_ctrl(); break;
     case 0020: data = serial_2sio1_in_ctrl(); break;

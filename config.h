@@ -58,6 +58,7 @@
 #define CSM_ACR         1
 #define CSM_2SIO1       2
 #define CSM_2SIO2       3
+#define CSM_CEN			4
 
 #define CSF_OFF         0
 #define CSF_ON          1
