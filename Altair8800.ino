@@ -23,6 +23,7 @@
 #include "host.h"
 #include "mem.h"
 #include "serial.h"
+#include "printer.h"
 #include "profile.h"
 #include "breakpoint.h"
 #include "disassembler.h"
@@ -334,7 +335,7 @@ void altair_wait_step()
 {
   cswitch &= BIT(SW_RESET); // clear everything but RESET status
   while( host_read_status_led_WAIT() && (cswitch & (BIT(SW_STEP) | BIT(SW_SLOW) | BIT(SW_RESET)))==0 )
-    read_inputs();
+    { read_inputs(); delay(10); }
 
   if( cswitch & BIT(SW_SLOW) ) delay(500);
 }
@@ -412,17 +413,14 @@ bool read_intel_hex()
         case 0:
           {
             // data record
-            if( n>0 ) {numsys_print_word(a); Serial.print(':');}
             for(byte i=0; i<n; i++)
               {
                 d = numsys_read_hex_byte();
-                Serial.print(' '); 
-                numsys_print_byte(d);
                 MWRITE(a, d);
                 cs -= d;
                 a++;
               }
-            if( n>0 ) Serial.println();
+            Serial.print('.');
             break;
           }
 
@@ -435,7 +433,8 @@ bool read_intel_hex()
         }
 
       // test checksum
-      if( cs != numsys_read_hex_byte() )
+      byte csb = numsys_read_hex_byte();
+      if( cs != csb )
         return false; // checksum error
 
       // empty record means we're done
@@ -987,6 +986,12 @@ void altair_interrupt(uint16_t i, bool set)
 }
 
 
+bool altair_interrupt_active(uint16_t i)
+{
+  return (altair_interrupts_buf & i)!=0;
+}
+
+
 static byte altair_interrupt_handler()
 {
   byte opcode = 0xff;
@@ -1108,47 +1113,30 @@ void altair_out(byte addr, byte data)
 {
   host_set_status_led_OUT();
   host_set_status_led_WO();
-  host_set_addr_leds(addr|addr*256);
-  /*host_set_data_leds(0xff);*/
+  altair_set_outputs(addr | addr*256, data);
 
   switch( addr )
     {
     case 0000: serial_sio_out_ctrl(data); break;
     case 0001: serial_sio_out_data(data); break;
-
-	case 0002: serial_centronics_out_ctrl(data); break;
-    case 0003: serial_centronics_out_data(data); break;
-    
+    case 0002: printer_out_ctrl(data); break;
+    case 0003: printer_out_data(data); break;
     case 0006: serial_acr_out_ctrl(data); break;
     case 0007: serial_acr_out_data(data); break;
-
     case 0010:
     case 0011:
     case 0012: drive_out(addr, data); break;
-
     case 0020: serial_2sio1_out_ctrl(data); break;
     case 0021: serial_2sio1_out_data(data); break;
-
     case 0022: serial_2sio2_out_ctrl(data); break;
     case 0023: serial_2sio2_out_data(data); break;
-
     case 0376: altair_vi_out_control(data); break;
-    default:
-      Serial.print("Unknown out address: Q");
-      Serial.print(addr, OCT);
-      Serial.print(", data: 0x");
-      Serial.println(data, HEX);
-      break;
     }
   
   if( host_read_status_led_WAIT() )
     {
-      /*altair_set_outputs(addr | addr*256, 0xff);*/
-       host_set_data_leds(data);
       altair_wait_step();
     }
-    
-    host_set_data_leds(data);
 
   host_clr_status_led_OUT();
 }
@@ -1156,10 +1144,10 @@ void altair_out(byte addr, byte data)
 
 byte altair_in(byte addr)
 {
-  byte data = 0;
+	byte data = 0;
 
-  host_set_status_led_INP();
-  host_set_addr_leds(addr | addr*256);
+	host_set_status_led_INP();
+	host_set_addr_leds(addr | addr*256);
 
   // check the most common cases fist:
   //  - reading 2-SIO control register (i.e. waiting for serial input)
@@ -1167,9 +1155,8 @@ byte altair_in(byte addr)
   switch( addr )
     {
     case 0000: data = serial_sio_in_ctrl(); break;
-
-    case 0002: data = serial_centronics_in_control();
-    
+	case 0002: data = printer_in_ctrl(); break;
+    case 0003: data = printer_in_data(); break;
     case 0006: data = serial_acr_in_ctrl(); break;
     case 0020: data = serial_2sio1_in_ctrl(); break;
     case 0022: data = serial_2sio2_in_ctrl(); break;
@@ -1181,20 +1168,15 @@ byte altair_in(byte addr)
     case 0007: data = serial_acr_in_data(); break;
     case 0021: data = serial_2sio1_in_data(); break;
     case 0023: data = serial_2sio2_in_data(); break;
-    default:   data = ~altair_read_sense_switches(); /*0xff;*/ 
-      Serial.print("Unknown inp address: Q");
-      Serial.println(addr, OCT);
-     break;
+    default:   data = ~altair_read_sense_switches(); break;
     }
 
-  if( host_read_status_led_WAIT() )
-    {
-      /*altair_set_outputs(addr | addr*256, data);*/
-      host_set_data_leds(data);
-      altair_wait_step();
-    }
-    
-    host_set_data_leds(data);
+	host_set_data_leds(data);
+
+	if( host_read_status_led_WAIT() )
+	{
+		altair_wait_step();
+	}
 
   host_clr_status_led_INP();
   return data;
@@ -1215,6 +1197,7 @@ void setup()
   serial_setup();
   profile_setup();
   rtc_setup();
+  printer_setup();
 
   // if RESET switch is held up during powerup then use default configuration settings
   if( host_read_function_switch(SW_RESET) )
