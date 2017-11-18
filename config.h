@@ -21,7 +21,6 @@
 // Enables throttling of CPU speed. This only makes sense to enable
 // on the Due since the Mega is too slow anyways and the throttling 
 // checks would only reduce performance further.
-// if USE_THROTTLE is enabled, USE_PROFILING must be enabled too.
 #define USE_THROTTLE 1
 
 
@@ -35,8 +34,18 @@
 #define NUM_DRIVES 4
 
 
+// Enables support for hard disk (88-HDSK). Hard disk support uses
+// about 1100 bytes of RAM plus 56 bytes for each unit.
+// Set to 0 to completely disable hard disk support
+#define NUM_HDSK_UNITS 1
+
+
 // Enables printer emulation which uses about 140 bytes of RAM.
 #define USE_PRINTER 1
+
+
+// Enable two 88-2SIO devices (instead of one).
+#define USE_SECOND_2SIO 0
 
 
 // If enabled, Address switch state will be set by issuing the '/'
@@ -57,13 +66,15 @@
 #define CF_CLEARMEM     0x20
 #define CF_HAVE_VI      0x40
 #define CF_DRIVE_RT     0x80
-#define CF_PRINTER_RT   0x00200000
+#define CF_PRINTER_RT   0x00020000
+#define CF_HDSK_RT      0x00040000
 
 #define CSM_SIO         0
 #define CSM_ACR         1
 #define CSM_2SIO1       2
 #define CSM_2SIO2       3
-#define CSM_CEN			4
+#define CSM_2SIO3       4
+#define CSM_2SIO4       5
 
 #define CSF_OFF         0
 #define CSF_ON          1
@@ -80,8 +91,8 @@
 
 extern uint32_t config_flags;
 extern uint32_t config_serial_settings;
-extern byte     config_interrupt_mask;
-extern byte     config_interrupt_vi_mask[8];
+extern uint32_t config_interrupt_mask;
+extern uint32_t config_interrupt_vi_mask[8];
 
 void config_setup();
 void config_edit();
@@ -104,6 +115,7 @@ float    config_rtc_rate();
 byte     config_aux1_program();
 
 uint32_t config_host_serial_baud_rate(byte iface);
+uint32_t config_host_serial_config(byte iface);
 byte     config_host_serial_primary();
 
 byte     config_serial_map_sim_to_host(byte dev); 

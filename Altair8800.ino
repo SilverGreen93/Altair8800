@@ -30,6 +30,7 @@
 #include "numsys.h"
 #include "filesys.h"
 #include "drive.h"
+#include "hdsk.h"
 #include "timer.h"
 #include "prog.h"
 
@@ -40,8 +41,8 @@ uint16_t dswitch = 0;
 
 uint16_t p_regPC = 0xFFFF;
 
-volatile byte     altair_interrupts_buf = 0;
-volatile uint16_t altair_interrupts     = 0;
+volatile uint32_t altair_interrupts_buf = 0;
+volatile uint32_t altair_interrupts     = 0;
 volatile byte     altair_vi_level_cur   = 0;
 volatile byte     altair_vi_level       = 0;
 volatile bool     altair_interrupts_enabled = false;
@@ -56,6 +57,8 @@ void print_dbg_info();
 void read_inputs_panel();
 void read_inputs_serial();
 void process_inputs();
+bool read_intel_hex();
+void empty_input_buffer();
 void rtc_setup();
 
 uint32_t  throttle_micros = 0;
@@ -195,6 +198,17 @@ void process_inputs()
             
           serial_update_hlda_led();
         }
+      else if (dswitch & 0x40 )
+        {
+          Serial.println(F("\r\nReceiving Intel HEX data..."));
+          if( read_intel_hex() )
+            Serial.println(F("Success."));
+          else
+            Serial.println(F("Error!"));
+          
+          // skip any remaining input
+          empty_input_buffer();
+        }
       else
         {
           // SW7 is down => load program
@@ -233,12 +247,25 @@ void process_inputs()
           byte p = config_aux1_program();
           if( p & 0x80 )
             {
-              // run disk (first mount disk then install and run disk boot ROM)
-              if( drive_mount(0, p & 0x7f) )
+              if( p & 0x40 )
                 {
-                  dswitch = (dswitch & 0xff00) | 0x08;
-                  cswitch = BIT(SW_AUX1DOWN);
-                  process_inputs();
+                  // run hard disk (first mount disk then install and run hard disk boot ROM)
+                  if( hdsk_mount(0, 0, p & 0x3f) )
+                    {
+                      dswitch = (dswitch & 0xff00) | 14;
+                      cswitch = BIT(SW_AUX1DOWN);
+                      process_inputs();
+                    }
+                }
+              else
+                {
+                  // run disk (first mount disk then install and run disk boot ROM)
+                  if( drive_mount(0, p & 0x3f) )
+                    {
+                      dswitch = (dswitch & 0xff00) | 8;
+                      cswitch = BIT(SW_AUX1DOWN);
+                      process_inputs();
+                    }
                 }
             }
           else if( p>0 && prog_get_name(p)!=NULL )
@@ -253,21 +280,51 @@ void process_inputs()
 
   if( cswitch & BIT(SW_AUX2DOWN) )
     {
-      if( (dswitch&0xF000)==0x1000 )
+      if( false )
+        {}
+#if NUM_DRIVES>0
+      else if( (dswitch&0xF000)==0x1000 )
 	{
 	  if( (dswitch & 0xff)==0 )
 	    drive_dir();
 	  else if( drive_mount((dswitch >> 8) & 0x0f, dswitch & 0xff) )
 	    {
-	      const char *desc = drive_disk_description(dswitch&0xff);
+	      const char *desc = drive_get_image_description(dswitch&0xff);
 	      if( desc==NULL )
-                DBG_FILEOPS4(2, "mounted new disk ", drive_disk_filename(dswitch&0xff, false), F(" in drive "), (dswitch>>8) & 0x0f);
+                DBG_FILEOPS4(2, "mounted new disk image ", drive_get_image_filename(dswitch&0xff, false), F(" in drive "), (dswitch>>8) & 0x0f);
 	      else
-		DBG_FILEOPS4(2, "mounted disk '", desc, F("' in drive "), (dswitch>>8) & 0x0f);
+		DBG_FILEOPS4(2, "mounted disk image '", desc, F("' in drive "), (dswitch>>8) & 0x0f);
 	    }
 	  else
-	    DBG_FILEOPS4(1, "error mounting disk ", drive_disk_filename(dswitch&0xff, false), F(" in drive "), (dswitch>>8) & 0x0f);
+	    DBG_FILEOPS4(1, "error mounting disk image ", drive_get_image_filename(dswitch&0xff, false), F(" in drive "), (dswitch>>8) & 0x0f);
 	}
+#endif
+#if NUM_HDSK_UNITS>0
+      else if( (dswitch&0xF000)==0x3000 )
+	{
+	  if( (dswitch & 0xff)==0 )
+	    hdsk_dir();
+	  else 
+            {
+              char buf[50];
+              byte unit    = (dswitch >> 10) & 0x03;
+              byte platter = (dswitch >>  8) & 0x03;
+              sprintf(buf, "' in platter %i of unit %i", platter, unit+1);
+
+              if( hdsk_mount(unit, platter, dswitch & 0xff) )
+                {
+                  const char *desc = hdsk_get_image_description(dswitch&0xff);
+
+                  if( desc==NULL )
+                    DBG_FILEOPS3(2, "mounted new hard disk image '", hdsk_get_image_filename(dswitch&0xff, false), buf);
+                  else
+                    DBG_FILEOPS3(2, "mounted hard disk image '", desc, buf);
+                }
+              else
+                DBG_FILEOPS3(1, "error mounting hard disk image '", hdsk_get_image_filename(dswitch&0xff, false), buf);
+            }
+	}
+#endif
       else
 	{
 	  print_panel_serial();
@@ -282,13 +339,31 @@ void process_inputs()
     }
   else if( cswitch & BIT(SW_AUX2UP) )
     {
-      if( (dswitch&0xF000)==0x1000 )
+      if( false )
+        {}
+#if NUM_DRIVES>0
+      else if( (dswitch&0xF000)==0x1000 )
 	{
 	  if( drive_unmount((dswitch >> 8) & 0x0f) )
 	    DBG_FILEOPS2(2, "unmounted drive ", (dswitch>>8) & 0x0f);
 	  else
 	    DBG_FILEOPS2(1, "error unmounting drive ", (dswitch>>8) & 0x0f);
 	}
+#endif
+#if NUM_HDSK_UNITS>0
+      else if( (dswitch&0xF000)==0x3000 )
+	{
+          char buf[50];
+          byte unit    = (dswitch >> 10) & 0x03;
+          byte platter = (dswitch >>  8) & 0x03;
+          sprintf(buf, "platter %i of unit %i", platter, unit+1);
+
+	  if( hdsk_unmount(unit, platter) )
+	    DBG_FILEOPS2(1, "unmounted ", buf);
+	  else
+	    DBG_FILEOPS2(1, "error unmounting ", buf);
+        }
+#endif
       else
 	{
 	  print_panel_serial();
@@ -315,7 +390,7 @@ void process_inputs()
   if( cswitch & BIT(SW_RUN) )
     {
       if( config_serial_debug_enabled() && config_serial_input_enabled() )
-        Serial.print(F("\n\n--- RUNNING (press ESC twice to stop) ---\n\n"));
+        Serial.print(F("\r\n\n--- RUNNING (press ESC twice to stop) ---\r\n\n"));
       host_clr_status_led_WAIT();
     }
   if( cswitch & (BIT(SW_PROTECT)) )
@@ -361,10 +436,18 @@ byte read_device()
 {
   byte dev = 0xff;
 
-  Serial.print(F("(s=SIO,a=ACR,1=2SIO-1, 2=2SIO-2, SPACE=last, ESC=abort): "));
+#if USE_SECOND_2SIO>0
+  Serial.print(F("(s=SIO,a=ACR,1=2SIO-1,2=2SIO-2,3=2nd 2SIO-1,4=2nd 2SIO-2,SPACE=last,ESC=abort): "));
+#else
+  Serial.print(F("(s=SIO,a=ACR,1=2SIO-1,2=2SIO-2,SPACE=last,ESC=abort): "));
+#endif
 
   int c = -1;
+#if USE_SECOND_2SIO>0
+  while( c!='s' && c!='a' && c!='1' && c!='2' && c!='3' && c!='4' && c!=' ' && c!=27 )
+#else
   while( c!='s' && c!='a' && c!='1' && c!='2' && c!=' ' && c!=27 )
+#endif
     c = serial_read();
 
   if( c!=27 )
@@ -375,6 +458,10 @@ byte read_device()
 	case 'a': dev = CSM_ACR;   break;
 	case '1': dev = CSM_2SIO1; break;
 	case '2': dev = CSM_2SIO2; break;
+#if USE_SECOND_2SIO>0
+	case '3': dev = CSM_2SIO3; break;
+	case '4': dev = CSM_2SIO4; break;
+#endif
         case ' ': dev = 0x80;      break;
 	}
 
@@ -387,6 +474,7 @@ byte read_device()
 
 bool read_intel_hex()
 {
+  word aa = 0xffff;
   while( 1 )
     {
       // expect line to start with a colon
@@ -407,16 +495,26 @@ bool read_intel_hex()
 
       // next byte is record type
       byte r = numsys_read_hex_byte(); cs -= r;
-      
+
       switch( r )
         {
         case 0:
           {
             // data record
+
+            if( a != aa && n>0 )
+              { 
+                if( aa!=0xffff ) { numsys_print_word(aa-1); Serial.println(); }
+                numsys_print_word(a); 
+                aa = a; 
+              }
+            aa += n;
+            Serial.print('.');
+
             for(byte i=0; i<n; i++)
               {
                 d = numsys_read_hex_byte();
-                MWRITE(a, d);
+                Mem[a] = d;
                 cs -= d;
                 a++;
               }
@@ -438,18 +536,23 @@ bool read_intel_hex()
         return false; // checksum error
 
       // empty record means we're done
-      if( n==0 ) return true;
+      if( n==0 ) 
+        {
+          numsys_print_word(aa-1); 
+          Serial.println(); 
+          return true;
+        }
     }
 }
 
 
 void read_data()
 {
-  Serial.print(F("\n\nStart address: "));
+  Serial.print(F("\r\n\nStart address: "));
   uint16_t addr = numsys_read_word();
-  Serial.print(F("\nNumber of bytes: "));
+  Serial.print(F("\r\nNumber of bytes: "));
   uint16_t len  = numsys_read_word();
-  Serial.print(F("\nData: "));
+  Serial.print(F("\r\nData: "));
   while( len>0 )
     {
       Serial.write(' ');
@@ -457,7 +560,7 @@ void read_data()
       ++addr;
       --len;
     }
-  Serial.write('\n');
+  Serial.println();
 }
 
 void empty_input_buffer()
@@ -482,7 +585,7 @@ void read_inputs_serial()
     dswitch = dswitch ^ (1 << (data - 'a' + 10));
   else if( data == '/' )
     {
-      Serial.print(F("\nSet Addr switches to: "));
+      Serial.print(F("\r\nSet Addr switches to: "));
       dswitch = numsys_read_word();
       Serial.println('\n');
     }
@@ -509,9 +612,20 @@ void read_inputs_serial()
     cswitch |= BIT(SW_AUX1UP);
   else if( data == 'u' )
     cswitch |= BIT(SW_AUX1DOWN);
+  else if( data == '>' )
+    {
+      Serial.print(F("\r\nRun from address: "));
+      regPC = numsys_read_word()-1;
+      p_regPC = ~regPC;
+      if( config_serial_debug_enabled() )
+        Serial.print(F("\r\n\n--- RUNNING (press ESC twice to stop) ---\r\n\n"));
+      Serial.println();
+      host_clr_status_led_WAIT();
+    }
+#if STANDALONE>0
   else if( data == 's' )
     {
-      Serial.print(F("\nCapture from "));
+      Serial.print(F("\r\nCapture from "));
       byte dev = read_device();
       if( dev < 0xff )
 	{
@@ -527,7 +641,7 @@ void read_inputs_serial()
     }
   else if( data == 'l' )
     {
-      Serial.print(F("\nReplay to "));
+      Serial.print(F("\r\nReplay to "));
       byte dev = read_device();
       if( dev < 0xff )
         {
@@ -555,14 +669,60 @@ void read_inputs_serial()
     }
   else if( data == 'm' )
     {
-      dswitch = 0x1000;
-      Serial.print(F("\nDrive number: "));
-      dswitch |= (numsys_read_word() & 0x0f) << 8;
-      Serial.print(F(" Disk number: "));
-      dswitch |= numsys_read_word() & 0xff;
-      cswitch |= BIT(SW_AUX2DOWN);
-      Serial.println();
+      char c;
+      Serial.print(F("\r\n(F)loppy or (H)ard disk? "));
+      do { c=serial_read(); } while(c!='f' && c!='F' && c!='h' && c!='H' && c!=27);
+      if( c!=27 )
+        {
+          bool ok = true;
+          Serial.print(c);
+          if( (c=='f' || c=='F') )
+            {
+              dswitch = 0x1000;
+              Serial.print(F(" Drive number (0-15): "));
+              word w = numsys_read_word();
+              if( w<16 )
+                dswitch |= w << 8;
+              else
+                ok = false;
+            }
+          else
+            {
+              dswitch = 0x3000;
+#if NUM_HDSK_UNITS>1
+              Serial.print(F(" Unit number (1-")); 
+              Serial.print(NUM_HDSK_UNITS);
+              Serial.print(F("): "));
+              do { c=serial_read(); } while( (c<'1' || c>'0'+NUM_HDSK_UNITS) && c!=27);
+              if( c==27 ) 
+                ok = false;
+              else
+                { Serial.print(c); dswitch |= (c-'1') << 10; }
+#endif
+              if( ok )
+                {
+                  Serial.print(F(" Platter number (0-3): "));
+                  do { c=serial_read(); } while( (c<'0' || c>'3') && c!=27);
+                  if( c==27 )
+                    ok = false;
+                  else
+                    { Serial.print(c); dswitch |= (c-'0') << 8; }
+                }
+            }
+          
+          if( ok )
+            {
+              Serial.print(F(" Image number: "));
+              dswitch |= numsys_read_word() & 0xff;
+              cswitch |= BIT(SW_AUX2DOWN);
+            }
+          else
+            dswitch = 0;
+
+          Serial.println();
+        }
     }
+#endif
   else if( data == 'Q' )
     cswitch |= BIT(SW_PROTECT);
   else if( data == 'q' )
@@ -614,14 +774,8 @@ void read_inputs_serial()
     }
   else if( data == 'H' )
     {
-      Serial.println(F("\nReading HEX data..."));
-      if( read_intel_hex() )
-        Serial.println(F("Success.\n"));
-      else
-        Serial.println(F("Error!\n"));
-      
-      // skip any remaining input
-      empty_input_buffer();
+      dswitch = 0x40;
+      cswitch = BIT(SW_AUX1DOWN);
     }
   else if( data == 'L' )
     {
@@ -645,16 +799,16 @@ void read_inputs_serial()
         {
           if( numBreakpoints<MAX_BREAKPOINTS )
             {
-              Serial.print(F("\nAdd breakpoint at: "));
+              Serial.print(F("\r\nAdd breakpoint at: "));
               breakpoint_add(numsys_read_word());
             }
           else
-            Serial.print(F("\nToo many breakpoints!"));
+            Serial.print(F("\r\nToo many breakpoints!"));
         }
       else if( numBreakpoints>0 )
         breakpoint_remove_last();
 
-      Serial.print(F("\nBreakpoints at: "));
+      Serial.print(F("\r\nBreakpoints at: "));
       breakpoint_print();
       Serial.println('\n');
     }
@@ -677,7 +831,7 @@ void print_panel_serial(bool force)
 
   if( force || p_cswitch != cswitch || p_dswitch != dswitch || p_abus != abus || p_dbus != dbus || p_status != status )
     {
-      Serial.print(F("\033[s\033[0;0HINTE PROT MEMR INP M1 OUT HLTA STACK WO INT  D7  D6  D5  D4  D3  D2  D1  D0\n"));
+      Serial.print(F("\033[s\033[0;0HINTE PROT MEMR INP M1 OUT HLTA STACK WO INT  D7  D6  D5  D4  D3  D2  D1  D0\r\n"));
 
       if( status & ST_INTE  ) Serial.print(F(" *  "));    else Serial.print(F(" .  "));
       if( status & ST_PROT  ) Serial.print(F("  *  "));   else Serial.print(F("  .  "));
@@ -698,7 +852,7 @@ void print_panel_serial(bool force)
       if( dbus&0x04 )   Serial.print(F("   *")); else Serial.print(F("   ."));
       if( dbus&0x02 )   Serial.print(F("   *")); else Serial.print(F("   ."));
       if( dbus&0x01 )   Serial.print(F("   *")); else Serial.print(F("   ."));
-      Serial.print(("\nWAIT HLDA   A15 A14 A13 A12 A11 A10  A9  A8  A7  A6  A5  A4  A3  A2  A1  A0\n"));
+      Serial.print(("\r\nWAIT HLDA   A15 A14 A13 A12 A11 A10  A9  A8  A7  A6  A5  A4  A3  A2  A1  A0\r\n"));
       if( status & ST_WAIT ) Serial.print(F(" *  "));   else Serial.print(F(" .  "));
       if( status & ST_HLDA ) Serial.print(F("  *   ")); else Serial.print(F("  .   "));
       if( abus&0x8000 ) Serial.print(F("   *")); else Serial.print(F("   ."));
@@ -717,7 +871,7 @@ void print_panel_serial(bool force)
       if( abus&0x0004 ) Serial.print(F("   *")); else Serial.print(F("   ."));
       if( abus&0x0002 ) Serial.print(F("   *")); else Serial.print(F("   ."));
       if( abus&0x0001 ) Serial.print(F("   *")); else Serial.print(F("   ."));
-      Serial.print(F("\n            S15 S14 S13 S12 S11 S10  S9  S8  S7  S6  S5  S4  S3  S2  S1  S0\n"));
+      Serial.print(F("\r\n            S15 S14 S13 S12 S11 S10  S9  S8  S7  S6  S5  S4  S3  S2  S1  S0\r\n"));
       Serial.print(F("          "));
       if( dswitch&0x8000 ) Serial.print(F("   ^")); else Serial.print(F("   v"));
       if( dswitch&0x4000 ) Serial.print(F("   ^")); else Serial.print(F("   v"));
@@ -735,7 +889,7 @@ void print_panel_serial(bool force)
       if( dswitch&0x0004 ) Serial.print(F("   ^")); else Serial.print(F("   v"));
       if( dswitch&0x0002 ) Serial.print(F("   ^")); else Serial.print(F("   v"));
       if( dswitch&0x0001 ) Serial.print(F("   ^")); else Serial.print(F("   v"));
-      Serial.print(F("\n            Stop  Step  Examine  Deposit  Reset  Protect   Aux  Aux\n"));
+      Serial.print(F("\r\n            Stop  Step  Examine  Deposit  Reset  Protect   Aux  Aux\r\n"));
       Serial.print(F("           "));
       if( cswitch & BIT(SW_STOP) )    Serial.print(F("  ^ "));       else if( cswitch & BIT(SW_RUN) )       Serial.print(F("  v "));      else Serial.print(F("  o "));
       if( cswitch & BIT(SW_STEP) )    Serial.print(F("    ^ "));     else if( cswitch & BIT(SW_SLOW) )      Serial.print(F("    v "));    else Serial.print(F("    o "));
@@ -745,7 +899,7 @@ void print_panel_serial(bool force)
       if( cswitch & BIT(SW_PROTECT) ) Serial.print(F("      ^  "));  else if( cswitch & BIT(SW_UNPROTECT) ) Serial.print(F("      v  ")); else Serial.print(F("      o  "));
       if( cswitch & BIT(SW_AUX1UP) )  Serial.print(F("     ^  "));   else if( cswitch & BIT(SW_AUX1DOWN) )  Serial.print(F("     v  "));  else Serial.print(F("     o  "));
       if( cswitch & BIT(SW_AUX2UP) )  Serial.print(F("  ^  "));      else if( cswitch & BIT(SW_AUX2DOWN) )  Serial.print(F("  v  "));     else Serial.print(F("  o  "));
-      Serial.print(F("\n            Run         E.Next   D.Next    CLR   Unprotect\n\033[K\n\033[K\n\033[K\n\033[K\n\033[K\033[u"));
+      Serial.print(F("\r\n            Run         E.Next   D.Next    CLR   Unprotect\r\n\033[K\n\033[K\n\033[K\n\033[K\n\033[K\033[u"));
       p_cswitch = cswitch;
       p_dswitch = dswitch;
       p_abus = abus;
@@ -762,12 +916,12 @@ void print_dbg_info()
 
   if( regPC != p_regPC )
     {
-      Serial.print(F("\n PC   = "));   numsys_print_word(regPC);
+      Serial.print(F("\r\n PC   = "));   numsys_print_word(regPC);
       Serial.print(F(" = ")); numsys_print_mem(regPC, 3, true); 
       Serial.print(F(" = ")); disassemble(Mem, regPC);
-      Serial.print(F("\n SP   = ")); numsys_print_word(regSP);
+      Serial.print(F("\r\n SP   = ")); numsys_print_word(regSP);
       Serial.print(F(" = ")); numsys_print_mem(regSP, 8, true); 
-      Serial.print(F("\n regA = ")); numsys_print_byte(regA);
+      Serial.print(F("\r\n regA = ")); numsys_print_byte(regA);
       Serial.print(F(" regS = "));   numsys_print_byte(regS);
       Serial.print(F(" = "));
       if( regS & PS_SIGN )     Serial.print('S'); else Serial.print('.');
@@ -779,7 +933,7 @@ void print_dbg_info()
       Serial.print('.');
       if( regS & PS_CARRY )    Serial.print('C'); else Serial.print('.');
 
-      Serial.print(F("\n regB = ")); numsys_print_byte(regB);
+      Serial.print(F("\r\n regB = ")); numsys_print_byte(regB);
       Serial.print(F(" regC = "));   numsys_print_byte(regC);
       Serial.print(F(" regD = "));   numsys_print_byte(regD);
       Serial.print(F(" regE = "));   numsys_print_byte(regE);
@@ -825,9 +979,6 @@ void reset(bool resetPC)
 
       // close all open files
       serial_close_files();
-
-      // unmount all drives
-      drive_reset();
     }
 
   altair_interrupts     = 0;
@@ -846,9 +997,9 @@ void switch_interrupt_handler()
       if( !config_serial_debug_enabled() ) 
         {}
       else if( config_serial_panel_enabled() )
-        Serial.print(F("\033[2J\033[14B\n------ STOP ------\n\n"));
+        Serial.print(F("\033[2J\033[14B\r\n------ STOP ------\r\n\n"));
       else
-        Serial.print(F("\n\n------ STOP ------\n\n"));
+        Serial.print(F("\r\n\n------ STOP ------\r\n\n"));
       p_regPC = ~regPC;
     }
   else if( altair_interrupts & INT_SW_RESET )
@@ -964,7 +1115,7 @@ void altair_interrupt_disable()
 }
 
 
-void altair_interrupt(uint16_t i, bool set)
+void altair_interrupt(uint32_t i, bool set)
 {
   if( i & INT_DEVICE )
     {
@@ -986,7 +1137,7 @@ void altair_interrupt(uint16_t i, bool set)
 }
 
 
-bool altair_interrupt_active(uint16_t i)
+bool altair_interrupt_active(uint32_t i)
 {
   return (altair_interrupts_buf & i)!=0;
 }
@@ -1017,7 +1168,7 @@ static byte altair_interrupt_handler()
 
   if( host_read_status_led_WAIT() )
     {
-      if( config_serial_debug_enabled() ) { Serial.print(F("\nInterrupt! opcode=")); numsys_print_byte(opcode); Serial.println(); }
+      if( config_serial_debug_enabled() ) { Serial.print(F("\r\nInterrupt! opcode=")); numsys_print_byte(opcode); Serial.println(); }
       altair_set_outputs(regPC, opcode);
       altair_wait_step();
     }
@@ -1113,7 +1264,17 @@ void altair_out(byte addr, byte data)
 {
   host_set_status_led_OUT();
   host_set_status_led_WO();
-  altair_set_outputs(addr | addr*256, data);
+  host_set_addr_leds(addr|addr*256);
+
+  // The S-100 bus on the real Altair has separate data
+  // buses for data in (to CPU) and data out (from CPU).
+  // The data LEDs on the front panel are connected to
+  // the "data in" lines. For output operations those
+  // lines are in high-Z state and therefore the LEDs
+  // are all on regardless of the data. 
+  // We do not simulate the original behavior here.
+  // We just show the proper data to be used by external hw.
+  host_set_data_leds(data);
 
   switch( addr )
     {
@@ -1126,15 +1287,31 @@ void altair_out(byte addr, byte data)
     case 0010:
     case 0011:
     case 0012: drive_out(addr, data); break;
+    case 0240:
+    case 0241:
+    case 0242:
+    case 0243:
+    case 0244:
+    case 0245:
+    case 0246:
+    case 0247: hdsk_4pio_out(addr, data); break;
     case 0020: serial_2sio1_out_ctrl(data); break;
     case 0021: serial_2sio1_out_data(data); break;
     case 0022: serial_2sio2_out_ctrl(data); break;
     case 0023: serial_2sio2_out_data(data); break;
+#if USE_SECOND_2SIO>0
+    case 0024: serial_2sio3_out_ctrl(data); break;
+    case 0025: serial_2sio3_out_data(data); break;
+    case 0026: serial_2sio4_out_ctrl(data); break;
+    case 0027: serial_2sio4_out_data(data); break;
+#endif
     case 0376: altair_vi_out_control(data); break;
     }
   
   if( host_read_status_led_WAIT() )
     {
+      //To show proper data here, comment the next line
+      //altair_set_outputs(addr | addr*256, 0xff);
       altair_wait_step();
     }
 
@@ -1144,10 +1321,10 @@ void altair_out(byte addr, byte data)
 
 byte altair_in(byte addr)
 {
-	byte data = 0;
+  byte data = 0;
 
-	host_set_status_led_INP();
-	host_set_addr_leds(addr | addr*256);
+  host_set_status_led_INP();
+  host_set_addr_leds(addr | addr*256);
 
   // check the most common cases fist:
   //  - reading 2-SIO control register (i.e. waiting for serial input)
@@ -1155,28 +1332,53 @@ byte altair_in(byte addr)
   switch( addr )
     {
     case 0000: data = serial_sio_in_ctrl(); break;
-	case 0002: data = printer_in_ctrl(); break;
-    case 0003: data = printer_in_data(); break;
     case 0006: data = serial_acr_in_ctrl(); break;
     case 0020: data = serial_2sio1_in_ctrl(); break;
     case 0022: data = serial_2sio2_in_ctrl(); break;
+#if USE_SECOND_2SIO>0
+    case 0024: data = serial_2sio3_in_ctrl(); break;
+    case 0026: data = serial_2sio4_in_ctrl(); break;
+#endif
     case 0377: data = altair_read_sense_switches(); break;
     case 0010:
     case 0011:
     case 0012: data = drive_in(addr); break;
+    case 0240:
+    case 0241:
+    case 0242:
+    case 0243:
+    case 0244:
+    case 0245:
+    case 0246:
+    case 0247: data = hdsk_4pio_in(addr); break;
     case 0001: data = serial_sio_in_data(); break;
     case 0007: data = serial_acr_in_data(); break;
     case 0021: data = serial_2sio1_in_data(); break;
     case 0023: data = serial_2sio2_in_data(); break;
-    default:   data = ~altair_read_sense_switches(); break;
+#if USE_SECOND_2SIO>0
+    case 0025: data = serial_2sio3_in_data(); break;
+    case 0027: data = serial_2sio4_in_data(); break;
+#endif
+    case 0002: data = printer_in_ctrl(); break;
+    case 0003: data = printer_in_data(); break;
+    default:   
+        //We read proper data from front panel switches here
+        //as if it was sent by external hardware.
+                data = ~altair_read_sense_switches(); break;
+                //data = 0xff; break;
     }
 
-	host_set_data_leds(data);
-
-	if( host_read_status_led_WAIT() )
-	{
-		altair_wait_step();
-	}
+  //The next line should not be necessary for external hardware
+  //but it should't hurt to show data on outputs.
+  host_set_data_leds(data);
+  
+  if( host_read_status_led_WAIT() )
+    {
+      altair_set_outputs(addr| addr*256, data);
+      altair_wait_step();
+    }
+  else
+    host_set_data_leds(data);
 
   host_clr_status_led_INP();
   return data;
@@ -1193,6 +1395,7 @@ void setup()
   host_setup();
   filesys_setup();
   drive_setup();
+  hdsk_setup();
   config_setup();
   serial_setup();
   profile_setup();
@@ -1200,7 +1403,7 @@ void setup()
   printer_setup();
 
   // if RESET switch is held up during powerup then use default configuration settings
-  if( host_read_function_switch(SW_RESET) )
+  if( host_is_reset() )
     {
       // temporarily reset configuration (also calls host_serial_setup)
       config_defaults(true);
@@ -1213,8 +1416,9 @@ void setup()
   else
     {
       // set up serial connection on the host
-      host_serial_setup(0, config_host_serial_baud_rate(0), config_host_serial_primary()==0);
-      host_serial_setup(1, config_host_serial_baud_rate(1), config_host_serial_primary()==1);
+      for(byte i=0; i<HOST_NUM_SERIAL_PORTS; i++)
+        host_serial_setup(i, config_host_serial_baud_rate(i), config_host_serial_config(i),
+                          config_host_serial_primary()==i);
     }
 
   host_set_status_led_WAIT();
@@ -1241,7 +1445,7 @@ void setup()
 
   reset(false);
 
-  if( config_serial_panel_enabled() ) Serial.print(F("\033[2J\033[14B\n"));
+  if( config_serial_panel_enabled() ) Serial.print(F("\033[2J\033[14B\r\n"));
 }
 
 

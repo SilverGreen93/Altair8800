@@ -6,6 +6,28 @@
 #ifndef HOST_DUE_H
 #define HOST_DUE_H
 
+#include "config.h"
+#include "switch_serial.h"
+
+
+// If the PROTECT switch is not used (USE_PROTECT set to 0 in config.h) then those pins
+// can be used to provide an additional serial interface. Set USE_SERIAL_ON_A6A7 to 1
+// here. The A6 pin is RX and A7 is TX.
+// WARNING: It is highly recommended to physically disable the PROTECT switch by
+//          disconnecting the GND wire from the switch before enabling this. The serial
+//          lines idle HIGH and the PROTECT switch will connect them to GND when pressed,
+//          creating a direct short and likely killing the A7 pin on the Arduino and/or 
+//          your connected serial device.
+#define USE_SERIAL_ON_A6A7 0
+
+
+// The pins driving the RX and TX LEDs located next to the Native USB port on the
+// Arduino Due can be controlled as digital I/O pins 72 and 73. They do not serve
+// any other purpose on the Due so we can use them for an additional serial port.
+// See the documentation for where exactly to solder the wires onto the Due.
+#define USE_SERIAL_ON_RXLTXL 0
+
+
 #define MEMSIZE 0x10000
 
 #define HOST_STORAGESIZE due_storagesize
@@ -13,37 +35,10 @@
 
 #define HOST_PERFORMANCE_FACTOR 1.0
 
+#define HOST_NUM_SERIAL_PORTS   (3+USE_SERIAL_ON_A6A7+USE_SERIAL_ON_RXLTXL)
+
 extern uint32_t due_storagesize;
 
-// ------------------------------------------ serial interface
-
-class SwitchSerialClass : public Stream
-{
-  public:
-    SwitchSerialClass();
-    virtual void begin(unsigned long);
-    virtual void end();
-    virtual int available(void);
-    virtual int availableForWrite(void);
-    virtual int peek(void);
-    virtual int read(void);
-    virtual void flush(void);
-    virtual size_t write(uint8_t);
-    using Print::write; // pull in write(str) and write(buf, size) from Print
-    virtual operator bool();
-
-    void    select(uint8_t n) { m_selected = n; }
-    uint8_t getSelected() { return m_selected; }
-
- private:
-    uint8_t m_selected;
-};
-
-extern SwitchSerialClass SwitchSerial;
-#define Serial SwitchSerial
-
-bool host_serial_available_for_write(byte iface);
-void host_serial_write(byte iface, byte data);
 
 // ------------------------------------------ switches
 
@@ -101,7 +96,7 @@ uint16_t host_read_addr_switches();
 #define host_set_status_leds_READMEM_M1()     REG_PIOC_SODR = 0x10A00000
 
 // reading from stack (MEMR on, WO on, STACK on)
-#define host_set_status_leds_READMEM_STACK()  REG_PIOC_SODR = 0x10200000
+#define host_set_status_leds_READMEM_STACK()  REG_PIOC_SODR = 0x14200000
 
 // writing to memory (MEMR off, WO off)
 #define host_set_status_leds_WRITEMEM()       REG_PIOC_CODR = 0x10200000
