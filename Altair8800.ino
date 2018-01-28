@@ -178,20 +178,20 @@ void process_inputs()
             {
               // SW6 is up => save memory page
               if( filesys_write_file('M', filenum, Mem+page, 256) )
-                DBG_FILEOPS2(3, "saved memory page ", int(page>>8));
+                DBG_FILEOPS4(3, "saved memory page ", int(page>>8), F(" to file #"), int(filenum));
               else
-                DBG_FILEOPS2(2, "unable to save memory page ", int(page>>8));
+                DBG_FILEOPS4(2, "unable to save memory page ", int(page>>8), F(" to file #"), int(filenum));
             }
           else
             {
               // SW6 is down => load memory page
               if( filesys_read_file('M', filenum, Mem+page, 256)==256 )
                 {
-                  DBG_FILEOPS2(3, "loaded memory page ", int(page>>8));
+                  DBG_FILEOPS4(3, "loaded memory page ", int(page>>8), F(" from file #"), int(filenum));
                   regPC = page;
                 }
               else
-                DBG_FILEOPS2(2, "file not found for memory page ", int(page>>8));
+                DBG_FILEOPS4(2, "file not found for memory page ", int(page>>8), F(" from file #"), int(filenum));
                 
               altair_set_outputs(regPC, MREAD(regPC));
             }
@@ -1396,7 +1396,7 @@ void setup()
   filesys_setup();
   drive_setup();
   hdsk_setup();
-  config_setup();
+  config_setup(host_read_function_switch(SW_DEPOSIT) ? host_read_addr_switches() : 0);
   serial_setup();
   profile_setup();
   rtc_setup();
@@ -1420,6 +1420,10 @@ void setup()
         host_serial_setup(i, config_host_serial_baud_rate(i), config_host_serial_config(i),
                           config_host_serial_primary()==i);
     }
+
+  // if EXAMINE switch is held up during powerup then show host system info
+  if( host_read_function_switch(SW_EXAMINE) )
+    host_system_info();
 
   host_set_status_led_WAIT();
 

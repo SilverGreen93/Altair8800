@@ -26,11 +26,6 @@
 #include "host_mega.h"
 
 
-// setting this to 0 disables the bits/parity/stop-bits selection 
-// (always uses 8N1) but saves 30 bytes of RAM
-#define USE_SERIAL_CONFIGS 1
-
-
 #if NUM_DRIVES>0
 #error Arduino MEGA port does not support disk drives. Set NUM_DRIVES to 0 in config.h
 #endif
@@ -174,7 +169,7 @@ static void switch_check(byte i)
         {
           switches_debounced |= bitval;
           switches_pulse     |= bitval;
-          if( function_switch_irq[i] ) altair_interrupt(function_switch_irq[i]<<24);
+          if( function_switch_irq[i] ) altair_interrupt(((uint32_t) function_switch_irq[i])<<24);
           debounceTime[i] = millis() + 100;
         }
       else if( !d1 && d2 ) 
@@ -264,11 +259,7 @@ void host_serial_setup(byte iface, uint32_t baud, uint32_t config, bool set_prim
   if( iface==0 )
     {
       Serial.end();
-#if USE_SERIAL_CONFIGS>0
       Serial.begin(baud, config);
-#else
-      Serial.begin(baud);
-#endif
       Serial.setTimeout(10000);
     }
 }
@@ -318,6 +309,34 @@ bool host_serial_port_has_configs(byte i)
 bool host_is_reset()
 {
   return host_read_function_switch(SW_RESET);
+}
+
+
+bool host_have_sd_card()
+{
+  return false;
+}
+
+
+static void printHex(int i) { if( i<0x1000 ) Serial.print('0'); Serial.println(i, HEX); }
+void host_system_info()
+{
+  extern int __bss_end, __heap_start, *__brkval; 
+  int ramstart = 0x0200;
+  int bssend   = (int) &__bss_end;
+  int heapend  = __brkval == 0 ? (int) &__heap_start : (int) __brkval;
+  int ramend   = 0x2200;
+
+  Serial.println(F("Host is Arduino Mega 2560\n"));
+  Serial.print(F("RAM Start        : 0x")); printHex(ramstart);
+  Serial.print(F("Data/Bss end     : 0x")); printHex(bssend);
+  Serial.print(F("Heap End         : 0x")); printHex(heapend);
+  Serial.print(F("Stack Pointer    : 0x")); printHex(SP);
+  Serial.print(F("RAM End          : 0x")); printHex(ramend);
+  Serial.print(F("Program RAM Used : ")); Serial.println(bssend - ramstart);
+  Serial.print(F("Heap RAM Used    : ")); Serial.println(heapend - bssend);
+  Serial.print(F("Stack RAM Used   : ")); Serial.println(ramend - SP);
+  Serial.print(F("Free RAM         : ")); Serial.println(SP - heapend);
 }
 
 

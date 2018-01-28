@@ -26,6 +26,7 @@
 #include "drive.h"
 #include "hdsk.h"
 #include "prog.h"
+#include "sdmanager.h"
 
 #define CONFIG_FILE_VERSION 3
 
@@ -101,7 +102,7 @@ uint32_t config_serial_settings2, new_config_serial_settings2;
 // MMM  = map device to host interface (000=NONE, 001=first, 010=second, 011=third, 100=fourth, 101=fifth, 111=primary)
 // UU   = only uppercase for inputs (00=off, 01=on, 10=autodetect)
 // 77   = use 7 bit for serial outputs (00=off [use 8 bit], 01=on, 10=autodetect)
-// TT   = translate backspace to (00=off, 01=underscore, 10=autodetect, 11=rubout)
+// TT   = translate backspace to (00=off, 01=underscore, 10=autodetect, 11=delete)
 // R    = force realtime operation (use baud rate even if not using interrupts)
 uint32_t config_serial_device_settings[NUM_SERIAL_DEVICES];
 
@@ -228,25 +229,66 @@ byte config_aux1_program()
   return config_aux1_prog;
 }
 
-byte config_serial_backspace(byte dev)
+
+byte config_serial_backspace(byte dev, uint16_t PC)
 {
-  return get_bits(config_serial_device_settings[dev], 14, 2);
+  byte b = get_bits(config_serial_device_settings[dev], 14, 2);
+
+  if( b==CSFB_AUTO )
+    {
+      if( PC == 0x038A || PC == 0x0380 || PC == 0x00A0 || PC == 0x00AC )
+        {
+          // ALTAIR 4k BASIC I/O routine has "IN" instruction at 0x389 and "OUT" instruction at 0x037F
+          // ALTAIR EXTENDED BASIC I/O routine has "IN" instruction at 0x09f and "OUT" instruction at 0x00AB
+          b = CSFB_UNDERSCORE;
+        }
+      else if( PC == 0x0726 || PC == 0x08e5 )
+        {
+          // MITS Programming System II has "IN" instruction at 0x0725 and 0x07E4
+          b = CSFB_DELETE;
+        }
+      else 
+        b = CSFB_NONE;
+    }
+  
+  return b;
 }
 
-byte config_serial_7bit(byte dev)
+
+bool config_serial_ucase(byte dev, uint16_t PC)
 {
-  return get_bits(config_serial_device_settings[dev], 12, 2);
+  byte b = get_bits(config_serial_device_settings[dev], 10, 2);
+  if( b==CSF_AUTO )
+    {
+      // ALTAIR 4k BASIC I/O routine has "IN" instruction at 0x0389
+      // MITS Programming System II has "IN" instruction at 0x0725 and 0x07E4
+      return (PC == 0x038A) || (PC == 0x0726) || (PC == 0x08e5);
+    }
+  else
+    return b==CSF_ON;
 }
 
-byte config_serial_ucase(byte dev)
+
+bool config_serial_7bit(byte dev, uint16_t PC)
 {
-  return get_bits(config_serial_device_settings[dev], 10, 2);
+  byte b = get_bits(config_serial_device_settings[dev], 12, 2);
+  if( b==CSF_AUTO )
+    {
+      // ALTAIR 4k BASIC I/O routine has "OUT" instruction at 0x037F
+      // ALTAIR EXTENDED BASIC I/O routine has "OUT" instruction at 0x00AB
+      // MITS Programming System II has "OUT" instruction at 0x071B
+      return (PC == 0x0380) || (PC == 0x00AC) || (PC == 0x071C);
+    }
+  else
+    return b==CSF_ON;
 }
+
 
 bool config_serial_trap_CLOAD()
 {
   return get_bits(config_serial_device_settings[CSM_ACR], 7, 1)>0;
 }
+
 
 uint32_t config_serial_playback_baud_rate(byte dev)
 {
@@ -503,7 +545,7 @@ static void print_serial_flag_backspace(uint32_t settings)
     {
     case CSFB_NONE:       Serial.print(F("off"));            break;
     case CSFB_UNDERSCORE: Serial.print(F("underscore (_)")); break;
-    case CSFB_RUBOUT:     Serial.print(F("rubout (127)"));   break;
+    case CSFB_DELETE:     Serial.print(F("delete (127)"));   break;
     case CSFB_AUTO:       Serial.print(F("autodetect"));     break;
     }
 }
@@ -787,8 +829,8 @@ static uint32_t toggle_serial_flag_backspace(uint32_t settings)
   switch( b )
     {
     case CSFB_NONE:       b = CSFB_UNDERSCORE; break;
-    case CSFB_UNDERSCORE: b = CSFB_RUBOUT; break;
-    case CSFB_RUBOUT:     b = CSFB_AUTO; break;
+    case CSFB_UNDERSCORE: b = CSFB_DELETE; break;
+    case CSFB_DELETE:     b = CSFB_AUTO; break;
     case CSFB_AUTO:       b = CSFB_NONE; break;
     }
   
@@ -1599,7 +1641,6 @@ void config_edit_serial_device(byte dev)
 
 void config_host_serial_details(byte iface)
 {
-  int i;
   bool go = true, redraw = true;
   byte row, col, r_baud, r_bits, r_parity, r_stop, r_cmd;
 
@@ -1617,7 +1658,7 @@ void config_host_serial_details(byte iface)
           Serial.print(F("\033[2J\033[0;0H\n"));
 #if HOST_NUM_SERIAL_PORTS>1
           Serial.print(F("Configure host serial settings for interface: "));
-          Serial.print(host_serial_port_name(i)); 
+          Serial.print(host_serial_port_name(iface)); 
           Serial.println();
 #else
           Serial.println(F("Configure host serial settings"));
@@ -1860,6 +1901,10 @@ void config_edit()
 
           Serial.println();
           Serial.println(F("(M)anage Filesystem"));
+#if NUM_DRIVES>0 || NUM_HDSK_UNITS>0
+          if( host_have_sd_card() )
+            { Serial.println(F("(F)ile manager for SD card")); row++; }
+#endif
           Serial.println(F("(C)lear memory"));
           Serial.println(F("(S)ave configuration"));
           Serial.println(F("(L)oad configuration"));
@@ -1911,6 +1956,15 @@ void config_edit()
 #if NUM_HDSK_UNITS>0
         case 'H': config_edit_hdsk(); break;
 #endif
+        case 'h': 
+          {
+            Serial.println(F("\n\n"));
+            host_system_info();
+            Serial.print(F("\n\nPress any key to continue..."));
+            while( !serial_available() ); 
+            while( serial_available() ) serial_read();
+            break;
+          }
           
         case '-': 
           {
@@ -1942,6 +1996,10 @@ void config_edit()
 
         case 'M': filesys_manage(); break;
 
+#if NUM_DRIVES>0 || NUM_HDSK_UNITS>0
+        case 'F': if( host_have_sd_card() ) sd_manager(); break;
+#endif
+
         case 'C': 
           {
             for(uint16_t i=0; i<mem_ram_limit; i++) Mem[i] = 0; 
@@ -1951,22 +2009,27 @@ void config_edit()
         case 'S': 
           {
             Serial.print(F("\n\nSave as config # (0=default): "));
-            byte i = (byte) numsys_read_word();
+            bool esc = false;
+            byte i = (byte) numsys_read_word(&esc);
             Serial.println();
-            if( !save_config(i & 0xff) )
-              Serial.println(F("Saving failed. Capture/replay in progress?"));
+            if( !esc )
+              if( !save_config(i & 0xff) )
+                Serial.println(F("Saving failed. Capture/replay in progress?"));
+
             break;
           }
         case 'L':
           {
             Serial.print(F("\n\nLoad config #: "));
-            byte i = (byte) numsys_read_word();
+            bool esc = false;
+            byte i = (byte) numsys_read_word(&esc);
             Serial.println();
-            if( !load_config(i & 0xff) )
-              {
-                Serial.println(F("Load failed. File does not exist?"));
-                delay(2000);
-              }
+            if( !esc )
+              if( !load_config(i & 0xff) )
+                {
+                  Serial.println(F("Load failed. File does not exist?"));
+                  delay(2000);
+                }
             break;
           }
         case 'R': config_defaults(false); break;
@@ -1990,7 +2053,7 @@ void config_edit()
             if( exit )
               {
                 mem_set_ram_limit_usr(config_mem_size-1);
-                Serial.print(F("\033[2J"));
+                Serial.print(F("\033[2J\033[0;0H"));
                 return;
               }
             break;
@@ -2086,10 +2149,10 @@ void config_defaults(bool apply)
 }
 
 
-void config_setup()
+void config_setup(byte n)
 {
   config_defaults(true);
-  if( load_config(0) )
+  if( load_config(n) )
     {
       apply_host_serial_settings(new_config_serial_settings, new_config_serial_settings2);
       mem_set_ram_limit_usr(config_mem_size-1);

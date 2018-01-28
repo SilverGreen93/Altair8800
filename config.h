@@ -82,7 +82,7 @@
 
 #define CSFB_NONE       0
 #define CSFB_UNDERSCORE 1
-#define CSFB_RUBOUT     3
+#define CSFB_DELETE     3
 #define CSFB_AUTO       2
 
 #define CP_NONE         0
@@ -94,7 +94,7 @@ extern uint32_t config_serial_settings;
 extern uint32_t config_interrupt_mask;
 extern uint32_t config_interrupt_vi_mask[8];
 
-void config_setup();
+void config_setup(byte n = 0);
 void config_edit();
 void config_defaults(bool apply);
 
@@ -122,9 +122,9 @@ byte     config_serial_map_sim_to_host(byte dev);
 bool     config_serial_realtime(byte dev);
 uint32_t config_serial_playback_baud_rate(byte dev);
 byte     config_serial_playback_example_nuls(byte dev);
-byte     config_serial_backspace(byte dev);
-byte     config_serial_7bit(byte dev);
-byte     config_serial_ucase(byte dev);
+byte     config_serial_backspace(byte dev, uint16_t PC);
+bool     config_serial_7bit(byte dev, uint16_t PC);
+bool     config_serial_ucase(byte dev, uint16_t PC);
 bool     config_serial_trap_CLOAD();
 
 byte        config_printer_type();
